@@ -1,0 +1,48 @@
+name: Source Prospects (Weekly)
+
+# WHEN THIS RUNS
+#   - Automatically, every Monday at 06:00 UTC (that is 7:00 am in Lagos).
+#   - Any time you like: open the Actions tab, click "Source Prospects
+#     (Weekly)", press "Run workflow". You can type a smaller number in the
+#     box (for example 5) for a quick test.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      max_new:
+        description: "How many new restaurants to add to the Sheet this run"
+        required: false
+        default: "25"
+
+# Only one sourcing run at a time, so two runs can never write to the Sheet together.
+concurrency:
+  group: prospect-sourcing
+  cancel-in-progress: false
+
+# The robot only needs to read this project's files, nothing more.
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Download the project files
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the tools the script needs
+        run: pip install requests "gspread>=6.0,<7"
+
+      - name: Find new restaurants and add them to the Sheet
+        env:
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          MAX_NEW_PER_RUN: ${{ github.event.inputs.max_new || '25' }}
+        run: python source_prospects.py
