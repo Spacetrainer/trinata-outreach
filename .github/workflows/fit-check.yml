@@ -1,0 +1,50 @@
+name: Fit Check (Daily)
+
+# WHEN THIS RUNS
+#   - Automatically, every morning at 08:00 UTC (9:00 am in Lagos), about two
+#     hours after Monday's sourcing run.
+#   - Any time you like: open the Actions tab, click "Fit Check (Daily)",
+#     press "Run workflow". Type a small number in the box (for example 3)
+#     for a quick, very cheap test.
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      max_rows:
+        description: "How many businesses to check this run"
+        required: false
+        default: "10"
+
+# Only one fit-check at a time, so two runs can never write to the Sheet together.
+concurrency:
+  group: fit-check
+  cancel-in-progress: false
+
+# The robot only needs to read this project's files, nothing more.
+permissions:
+  contents: read
+
+jobs:
+  fit-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download the project files
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the tools the script needs
+        run: pip install requests "gspread>=6.0,<7"
+
+      - name: Check the new businesses
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          MAX_ROWS_PER_RUN: ${{ github.event.inputs.max_rows || '10' }}
+        run: python fit_check.py
