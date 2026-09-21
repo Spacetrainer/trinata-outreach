@@ -19,6 +19,9 @@ WHAT IT DOES, IN PLAIN WORDS
          Not a fit     doesn't, or is a duplicate of another row
          Needs review  Claude wasn't sure, or couldn't open the website itself:
                        worth a quick human look
+    5. The one-word check: for a Needs review row whose Fit-check Notes start with
+       REVIEW:, open the website and type just Fit-checked or Not a fit in Message
+       Status. The next run fills in the rest of that row by itself.
 
 It runs by itself every morning (see .github/workflows/fit-check.yml) and can
 also be started by hand from the GitHub "Actions" tab.
@@ -80,7 +83,7 @@ PRICE_PER_SEARCH = 0.01
 # ---------------------------------------------------------------------
 # 2. THINGS YOU SHOULDN'T NEED TO TOUCH
 # ---------------------------------------------------------------------
-SCRIPT_VERSION = "2 (20 Sep 2026)"      # shown in each run report, so you can tell which copy is live
+SCRIPT_VERSION = "3 (21 Sep 2026)"      # shown in each run report, so you can tell which copy is live
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
@@ -105,6 +108,14 @@ STATUS_FIT = "Fit-checked"
 STATUS_NOT_FIT = "Not a fit"
 STATUS_REVIEW = "Needs review"
 NOT_ENOUGH = "Not enough information"
+
+# The one-word check: rows the robot cannot judge start their Fit-check Notes with REVIEW: and a plain
+# instruction. Once a person has typed Fit-checked or Not a fit in Message Status, the robot fills in the rest.
+REVIEW_PREFIX = "REVIEW:"
+REVIEW_HELP = ("open the website. Looks modern and works: set Message Status to Not a fit. "
+               "Will not open or looks old: set it to Fit-checked.")
+DONE_PREFIX = "Checked by hand"
+OLD_REVIEW_PHRASE = "the robot could not open the website itself"   # how version 2 marked such rows
 
 ICP_LABELS = {
     "ICP 1": "ICP 1 - Growing SME, no website",
@@ -872,14 +883,70 @@ def check_business(api_key, item, use_search):
     return verdict, basis, used
 
 
-def make_notes(today, verdict, basis, extra):
-    parts = [today, f"confidence: {verdict['confidence']}", "basis: " + ", ".join(basis)]
+def make_notes(today, verdict, basis, extra, lead=""):
+    parts = ([lead] if lead else []) + [today, f"confidence: {verdict['confidence']}", "basis: " + ", ".join(basis)]
     if verdict["evidence"]:
         parts.append("sources: " + " ; ".join(verdict["evidence"]))
     if verdict["note"]:
         parts.append(verdict["note"])
     parts.extend(extra)
     return clip(" | ".join(parts), 600)
+
+
+# ---------------------------------------------------------------------
+# The one-word check
+# ---------------------------------------------------------------------
+def hand_decision(status):
+    """What a person typed in Message Status, as Fit-checked or Not a fit (None if it is neither)."""
+    text = " ".join(clean(status).lower().replace("-", " ").split())
+    if text in ("fit checked", "fit", "fitchecked"):
+        return STATUS_FIT
+    if text in ("not a fit", "not fit", "notafit"):
+        return STATUS_NOT_FIT
+    return None
+
+
+def why_unread(notes):
+    """Why the robot could not open the website, in a few words, taken from its own note."""
+    match = re.search(r"website not readable \(([^)]*)\)", notes)
+    if match:
+        return match.group(1)
+    if "website found by search" in notes:
+        return "the website was found by search but not opened"
+    return "the website did not open"
+
+
+def finish_hand_reviews(sheet, headers, rows, today):
+    """For rows the robot flagged for a person, once that person has typed Fit-checked or Not a fit,
+    tidy up the rest of the row. Costs nothing. Returns how many rows it finished."""
+    finished = 0
+    for number, row in rows:
+        notes = row.get(NOTES_HEADER, "")
+        flagged = notes.startswith(REVIEW_PREFIX) or OLD_REVIEW_PHRASE in notes
+        if not flagged or notes.startswith(DONE_PREFIX):
+            continue
+        decision = hand_decision(row["Message Status"])
+        if decision is None:
+            continue
+        updates = {"Message Status": decision}
+        icp = row["ICP Match"].strip().lower()
+        if decision == STATUS_FIT:
+            if icp in ("", "none", "unclear"):
+                updates["ICP Match"] = ICP_LABELS["ICP 2"]
+            if row["Problem/Opportunity"].strip().lower() in ("", NOT_ENOUGH.lower()):
+                updates["Problem/Opportunity"] = (
+                    f"Website could not be opened by our automatic check ({why_unread(notes)}) "
+                    "and was judged by hand to need work."
+                )
+        elif icp == "":
+            updates["ICP Match"] = ICP_LABELS["None"]
+        rest = notes.split(" | ", 1)[1] if notes.startswith(REVIEW_PREFIX) and " | " in notes else notes
+        updates[NOTES_HEADER] = clip(f"{DONE_PREFIX} on {today}: {decision} | {rest}", 600)
+        write_cells(sheet, headers, number, updates)
+        row.update(updates)
+        finished += 1
+        log(f"Row {number}: {row['Company Name']} -- checked by hand as {decision}; the rest of the row was tidied.")
+    return finished
 
 
 # ---------------------------------------------------------------------
@@ -913,13 +980,16 @@ def main():
         f"Limits for this run: {max_rows} checked, about ${max_spend:.2f} spent.\n")
 
     counts = {STATUS_FIT: 0, STATUS_NOT_FIT: 0, STATUS_REVIEW: 0}
-    duplicates = checked = websites_read = searches = handled = 0
+    duplicates = checked = websites_read = searches = handled = hand_finished = 0
     spent = 0.0
     problem = None
     stopped_for_spend = False
     unexpected_errors = 0
 
     try:
+        # 0) Rows a person has already looked at (the one-word check): tidy them up. This costs nothing.
+        hand_finished = finish_hand_reviews(sheet, headers, rows, today)
+
         # 1) Duplicates cost nothing, so deal with all of them first.
         candidates = []
         for number, row in waiting:
@@ -986,9 +1056,10 @@ def main():
             # never managed to open, is not trusted on its own: a person takes a quick look first.
             site_was_read = bool(basis) and basis[0] == "website read"
             site_exists = is_real_website(current_site) or (bool(found) and is_real_website(found))
+            hand_check = False
             if review_unread and status == STATUS_NOT_FIT and site_exists and not site_was_read:
                 status = STATUS_REVIEW
-                extra.append("the robot could not open the website itself, so please take a quick look before rejecting it")
+                hand_check = True
 
             if found and is_real_website(found) and not is_real_website(current_site):
                 key = site_key(found)
@@ -996,6 +1067,7 @@ def main():
                 if other is not None and other != number:
                     status, icp_label, what, problem_text = STATUS_NOT_FIT, ICP_LABELS["None"], "", ""
                     extra.append(f"Duplicate of row {other} (its website, {found}, was found by search)")
+                    hand_check = False
                 else:
                     first_row_for_site[key] = number
                     updates["Website"] = found
@@ -1006,7 +1078,8 @@ def main():
                 "What They Do": what,
                 "Problem/Opportunity": problem_text,
                 "Message Status": status,
-                NOTES_HEADER: make_notes(today, verdict, basis, extra),
+                NOTES_HEADER: make_notes(today, verdict, basis, extra,
+                                         lead=(f"{REVIEW_PREFIX} {REVIEW_HELP}" if hand_check else "")),
             })
             write_cells(sheet, headers, number, updates)
             counts[status] += 1
@@ -1023,6 +1096,7 @@ def main():
     lines = [
         f"### Fit-check run - {today}",
         f"- Script version: {SCRIPT_VERSION}",
+        f"- Rows you checked by hand that the robot tidied up: {hand_finished}",
         f"- Businesses waiting at the start: **{len(waiting)}**",
         f"- Checked with Claude this run: **{checked}** (limit: {max_rows})",
         f"  - Fit-checked (look like a customer): {counts[STATUS_FIT]}",
