@@ -257,6 +257,11 @@ def build_row_updates(row_num, header_map, result, source, note, notes_col):
 # ---------------------------------------------------------------------------
 
 def _host_is_private(hostname):
+    """True only if EVERY address this hostname resolves to is private,
+    internal, or otherwise unsafe. A stray or misconfigured second address
+    (a placeholder IPv6 record is common with budget hosting) must not
+    block a site that also has a perfectly normal public address -- only
+    a hostname with nowhere safe to go at all gets refused."""
     try:
         infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror:
@@ -267,10 +272,10 @@ def _host_is_private(hostname):
             ip_obj = ipaddress.ip_address(ip)
         except ValueError:
             continue
-        if (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+        if not (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
                 or ip_obj.is_reserved or ip_obj.is_multicast or ip_obj.is_unspecified):
-            return True
-    return False
+            return False  # found at least one safe, public address -- good enough
+    return True  # nothing resolved, or every address that did was unsafe
 
 
 def safe_fetch(url, max_redirects=MAX_REDIRECTS, get=requests.get, host_check=_host_is_private):
