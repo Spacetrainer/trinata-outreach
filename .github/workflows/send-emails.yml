@@ -1,0 +1,42 @@
+name: Send Emails (Weekdays)
+
+on:
+  schedule:
+    - cron: "10 10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      test_send_to:
+        description: "TEST: send one approved email to this address instead (leave empty for a real run)"
+        required: false
+        default: ""
+      max_emails:
+        description: "Most emails to send this run (never more than 10 a day)"
+        required: false
+        default: "10"
+
+concurrency:
+  group: send-emails
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: pip install "gspread>=6,<7" "requests>=2.31" "dnspython>=2.4"
+
+      - name: Send emails
+        env:
+          ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          TEST_SEND_TO: ${{ github.event.inputs.test_send_to || '' }}
+          MAX_EMAILS_PER_RUN: ${{ github.event.inputs.max_emails || '10' }}
+        run: python send_emails.py
