@@ -40,3 +40,4 @@ jobs:
           TEST_SEND_TO: ${{ github.event.inputs.test_send_to || '' }}
           MAX_EMAILS_PER_RUN: ${{ github.event.inputs.max_emails || '10' }}
         run: python send_emails.py
+        
