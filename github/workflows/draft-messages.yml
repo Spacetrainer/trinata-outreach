@@ -1,0 +1,37 @@
+name: Draft Messages (Daily)
+
+on:
+  schedule:
+    - cron: "40 9 * * *"
+  workflow_dispatch:
+    inputs:
+      max_rows:
+        description: "How many businesses to draft for (1 = near-free test)"
+        required: false
+        default: "10"
+
+concurrency:
+  group: draft-messages
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: pip install "gspread>=6,<7" "requests>=2.31" "dnspython>=2.4"
+
+      - name: Draft messages
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          MAX_ROWS_PER_RUN: ${{ github.event.inputs.max_rows || '10' }}
+        run: python draft_messages.py
