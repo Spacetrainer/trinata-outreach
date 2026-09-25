@@ -19,7 +19,22 @@ WHAT IT DOES, IN PLAIN WORDS
          Not a fit     doesn't, or is a duplicate of another row
          Needs review  Claude wasn't sure, or couldn't open the website itself:
                        worth a quick human look
-    5. The one-word check: for a Needs review row whose Fit-check Notes start with
+    5. THE WEBSITE AND APP RULES (version 4, widened in version 5). The robot
+       marks these Fit-checked by itself, with no one-word check:
+         a) No website can be traced -- not its own, not a parent chain's or
+            hotel's -- so it NEEDS one, however busy it is on Instagram or
+            delivery apps.
+              Food business (restaurant, cafe, bar, bakery...): offer a website.
+                Glovo and Chowdeck already give them an ordering app.
+              Retail business (sells goods to the public, not food): offer a
+                website AND a shopping app.
+              Anything else: offer a website or an app.
+         b) A retail business (not food) that HAS a website but no app of its
+            own: offer a shopping app, even if the website is modern.
+       Exceptions: a business a source says has closed, and a branch covered by
+       a parent chain's, hotel's or mall's website. Rows rejected under the old
+       rules are put back in the queue once, automatically, and checked again.
+    6. The one-word check: for a Needs review row whose Fit-check Notes start with
        REVIEW:, open the website and type just Fit-checked or Not a fit in Message
        Status. The next run fills in the rest of that row by itself.
 
@@ -83,7 +98,7 @@ PRICE_PER_SEARCH = 0.01
 # ---------------------------------------------------------------------
 # 2. THINGS YOU SHOULDN'T NEED TO TOUCH
 # ---------------------------------------------------------------------
-SCRIPT_VERSION = "3 (21 Sep 2026)"      # shown in each run report, so you can tell which copy is live
+SCRIPT_VERSION = "5 (25 Sep 2026)"      # shown in each run report, so you can tell which copy is live
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
@@ -107,6 +122,33 @@ STATUS_SOURCED = "Sourced"
 STATUS_FIT = "Fit-checked"
 STATUS_NOT_FIT = "Not a fit"
 STATUS_REVIEW = "Needs review"
+
+# The no-website rule (version 4). Every note the robot writes now carries RULE_MARKER, so it can tell
+# rows judged under the new rule from rows rejected under the old one (which get one automatic recheck).
+RULE_MARKER = "fit-check v4"
+REQUEUE_PREFIX = "Queued for recheck (new no-website rule) on"
+DELIVERY_APPS = {
+    "glovoapp.com": "Glovo", "chowdeck.com": "Chowdeck", "jumia.food": "Jumia Food",
+    "food.jumia.com.ng": "Jumia Food", "ubereats.com": "Uber Eats", "heyfood.africa": "Heyfood",
+}
+NO_SITE_GAP_DELIVERY = ("No website of its own could be found. It takes orders through {app}, which it does not "
+                        "control, so it needs its own website where customers can see the full menu and reach it directly.")
+NO_SITE_GAP_FOOD = ("No website of its own could be found, so there is no online place of its own where customers "
+                    "can see its menu, prices and opening hours and contact it directly. It needs a website.")
+NO_SITE_GAP_PLAIN = ("No website or app of its own could be found, so there is no online place of its own where "
+                     "customers can see what it offers, book or order. It needs a website or app.")
+NO_SITE_GAP_RETAIL = ("No website or app of its own could be found, so customers cannot browse its products, check "
+                      "prices or order online. It needs a website and a shopping app.")
+RETAIL_APP_GAP = ("It sells directly to customers but has no app of its own. A shopping app would let customers browse, "
+                  "order and get offers from their phones, and keep coming back.")
+RETAIL_APP_ADDON = " It also has no app of its own; a shopping app would let customers browse and order from their phones."
+
+# Food service businesses get a website offer only (delivery apps already give them an ordering app).
+# A business counts as food service if its Sector or Sub-sector contains one of these whole words, or Claude says so.
+FOOD_WORDS = (
+    "restaurant", "cafe", "bar", "pub", "lounge", "bakery", "bakeries", "patisserie", "eatery", "eateries",
+    "catering", "canteen", "bukka", "fast food", "food service", "coffee shop", "pizzeria", "ice cream",
+)
 NOT_ENOUGH = "Not enough information"
 
 # The one-word check: rows the robot cannot judge start their Fit-check Notes with REVIEW: and a plain
@@ -123,6 +165,7 @@ ICP_LABELS = {
     "ICP 3": "ICP 3 - Growing company (20-50 staff)",
     "ICP 4": "ICP 4 - Established company (50-100 staff)",
     "ICP 5": "ICP 5 - Startup",
+    "Retail app": "Retail - shopping app opportunity",
     "None": "None",
     "Unclear": "Unclear",
 }
@@ -169,6 +212,8 @@ ICP 5 - Startup: has funding, is launching a product, needs an MVP, a customer-f
 HOW TO DECIDE
 - Choose the single closest ICP. Choose "None" if the business already looks well served digitally (for example a modern, mobile-friendly website with online ordering or booking), or is clearly too big, too small or in the wrong situation to need Trinata, or has closed. Choose "Unclear" when the evidence is too thin to judge.
 - Never guess headcount. Use only visible size cues (one small venue versus several branches, a premium brand, catering or event operations) and say when size is unknown.
+- RETAIL MEANS A CUSTOMER TOO. A business that sells goods directly to members of the public (for example shops, boutiques, supermarkets, pharmacies, phone and electronics stores, cosmetics, furniture or auto-parts stores) is a Trinata customer for a shopping app even if its website is modern, unless it already has its own app. Food service (restaurants, cafes, bars, bakeries, fast food, catering) does NOT count as retail here.
+- NO WEBSITE MEANS A CUSTOMER. A business with no website of its own is ICP 1 (or ICP 3 if it is clearly larger), even if it is busy on Instagram, Facebook, TikTok or WhatsApp, or sells through a delivery app such as Glovo, Chowdeck or Jumia Food. Social pages, delivery apps and review sites are NOT a substitute for a website, so never call such a business "well served". Choose None for it only if a source says it has closed, or it is covered by a parent chain's, hotel's or mall's website.
 - "Outdated website" means visible signs such as an old copyright year, no mobile-friendly design, broken or missing pages, or a site that will not load at all (a site that merely refuses our automatic reader does not count). A social media page (Instagram, Facebook, TikTok, a WhatsApp link) does not count as a website.
 - The digital gap you name must be specific and backed by the facts you were given, for example: no website; customers can only reach them through Instagram and phone, so there is no online menu, ordering or reservations. If you cannot support a specific gap, write "Not enough information".
 
@@ -187,9 +232,21 @@ Reply with ONLY one JSON object, with no other text and no code fences, using ex
   "what_they_do": "one or two plain sentences, at most 40 words",
   "problem_opportunity": "the one most specific digital gap Trinata could fix, at most 40 words, or Not enough information",
   "website_found": "",
+  "related_website": "",
+  "on_delivery_app": false,
+  "closed": false,
+  "retail_business": false,
+  "food_service": false,
+  "has_own_app": false,
   "evidence": ["up to 3 web addresses you actually relied on, or an empty list"],
   "note": "anything a human reviewer should know, at most 25 words, or an empty string"
 }
+"related_website": a website that covers this business but is not its own (a parent chain's, hotel's or mall's site), OR a site that might be its own but you are not sure; otherwise an empty string.
+"on_delivery_app": true only if the facts or search results show it selling through a delivery app such as Glovo, Chowdeck, Jumia Food or Uber Eats.
+"closed": true only if a source says the business has closed down.
+"retail_business": true if it sells goods directly to members of the public (see RETAIL above).
+"food_service": true if it is a restaurant, cafe, bar, bakery, fast-food outlet, caterer or similar food business.
+"has_own_app": true only if the facts or search results show it has its own mobile app (in an app store or linked from its website). A delivery app such as Glovo does not count.
 Use "high" confidence only when several independent facts agree."""
 
 
@@ -693,10 +750,34 @@ def interpret_answer(text):
         "what": clip(plain(raw.get("what_they_do")), 300) or NOT_ENOUGH,
         "problem": clip(plain(raw.get("problem_opportunity")), 300) or NOT_ENOUGH,
         "website_found": normalise_found_website(raw.get("website_found")),
+        "related_website": normalise_found_website(raw.get("related_website")),
+        "on_delivery_app": as_bool(raw.get("on_delivery_app")),
+        "closed": as_bool(raw.get("closed")),
+        "retail": as_bool(raw.get("retail_business")),
+        "food": as_bool(raw.get("food_service")),
+        "has_app": as_bool(raw.get("has_own_app")),
+        "answered": True,
         "evidence": [u.strip() for u in evidence
                      if isinstance(u, str) and u.strip().lower().startswith(("http://", "https://"))][:3],
         "note": clip(plain(raw.get("note")), 200),
     }
+
+
+def as_bool(value):
+    """Claude's true/false, accepting the word forms too; anything unclear counts as false."""
+    if isinstance(value, bool):
+        return value
+    return clean(value).lower() in ("true", "yes", "1")
+
+
+def delivery_app_seen(urls):
+    """The name of the first delivery app among these web addresses ('' if none)."""
+    for url in urls:
+        host = site_key(url)
+        for domain, name in DELIVERY_APPS.items():
+            if host and host_matches(host, (domain,)):
+                return name
+    return ""
 
 
 def normalise_found_website(text):
@@ -864,7 +945,9 @@ def check_business(api_key, item, use_search):
     if not page_ok and not use_search:
         verdict = {
             "icp": "Unclear", "confidence": "low", "what": NOT_ENOUGH, "problem": NOT_ENOUGH,
-            "website_found": "", "evidence": [], "note": "Web search is switched off, so nothing more was checked.",
+            "website_found": "", "related_website": "", "on_delivery_app": False, "closed": False, "answered": False,
+            "retail": False, "food": False, "has_app": False,
+            "evidence": [], "note": "Web search is switched off, so nothing more was checked.",
         }
         basis.append("no search (switched off)")
         return verdict, basis, {"input": 0, "output": 0, "searches": 0}
@@ -875,7 +958,8 @@ def check_business(api_key, item, use_search):
     if verdict is None:
         verdict = {
             "icp": "Unclear", "confidence": "low", "what": NOT_ENOUGH, "problem": NOT_ENOUGH,
-            "website_found": "", "evidence": [],
+            "website_found": "", "related_website": "", "on_delivery_app": False, "closed": False,
+            "retail": False, "food": False, "has_app": False, "answered": False, "evidence": [],
             "note": "Claude's answer could not be read, so this was not retried automatically.",
         }
     if search_allowed:
@@ -884,7 +968,7 @@ def check_business(api_key, item, use_search):
 
 
 def make_notes(today, verdict, basis, extra, lead=""):
-    parts = ([lead] if lead else []) + [today, f"confidence: {verdict['confidence']}", "basis: " + ", ".join(basis)]
+    parts = ([lead] if lead else []) + [today, RULE_MARKER, f"confidence: {verdict['confidence']}", "basis: " + ", ".join(basis)]
     if verdict["evidence"]:
         parts.append("sources: " + " ; ".join(verdict["evidence"]))
     if verdict["note"]:
@@ -950,6 +1034,83 @@ def finish_hand_reviews(sheet, headers, rows, today):
 
 
 # ---------------------------------------------------------------------
+# The no-website rule
+# ---------------------------------------------------------------------
+def is_food_business(item, verdict):
+    """True for restaurants, cafes, bars and other food service businesses."""
+    words = f"{item.get('sector', '')} {item.get('sub_sector', '')}".lower()
+    return bool(verdict.get("food")) or any(re.search(r"\b" + re.escape(w) + r"(s|es)?\b", words) for w in FOOD_WORDS)
+
+
+def apply_offer_rules(verdict, used, current_site, site_was_read, delivery_hint, food):
+    """The website and app rules. Returns the new (icp key, problem, note) to use, or None when
+    neither rule applies and Claude's own verdict stands."""
+    if not verdict.get("answered") or verdict.get("closed"):
+        return None
+    looked = bool(used.get("searches")) or site_was_read      # did we really look for a website?
+    if not looked:
+        return None
+    icp = verdict["icp"]
+    problem = verdict["problem"]
+    specific = bool(problem) and not problem.lower().startswith(NOT_ENOUGH.lower())
+    retail = bool(verdict.get("retail")) and not food
+    own_site = is_real_website(current_site) or bool(verdict.get("website_found"))
+    covered = bool(verdict.get("related_website"))
+
+    # a) No website traced anywhere: it needs one.
+    if not own_site and not covered and used.get("searches"):
+        if food:
+            app = delivery_hint or ("a delivery app" if verdict.get("on_delivery_app") else "")
+            gap = NO_SITE_GAP_DELIVERY.format(app=app) if app else NO_SITE_GAP_FOOD
+        elif retail:
+            gap = NO_SITE_GAP_RETAIL
+        else:
+            gap = NO_SITE_GAP_PLAIN
+        note = "no website traced, so it needs one" + (" (and a shopping app)" if retail else "")
+        if icp in ("ICP 1", "ICP 2", "ICP 3", "ICP 5"):
+            if retail and specific and "app" not in problem.lower():
+                problem = clip(problem + RETAIL_APP_ADDON, 300)
+            return icp, (problem if specific else gap), note
+        return "ICP 1", gap, note + f" (the robot's first answer was {icp})"
+
+    # b) Retail (not food) with its own website but no app of its own: offer a shopping app.
+    if retail and own_site and not covered and not verdict.get("has_app"):
+        note = "retail business with no app of its own, so offer a shopping app"
+        if icp in ("ICP 1", "ICP 2", "ICP 3", "ICP 5") and specific:
+            if "app" not in problem.lower():
+                problem = clip(problem + RETAIL_APP_ADDON, 300)
+            return icp, problem, note
+        return "Retail app", RETAIL_APP_GAP, note + (f" (the robot's first answer was {icp})" if icp not in ("ICP 1", "ICP 2", "ICP 3", "ICP 5") else "")
+    return None
+
+
+def requeue_old_no_website(sheet, headers, rows, today):
+    """Once only: put rows that were rejected (or left unsure) under the old rule, and that have no
+    website, back in the queue so the new rule can judge them. A person's own decision, duplicates and
+    rows already judged under version 4 are left alone. Costs nothing by itself."""
+    queued = 0
+    for number, row in rows:
+        status = row["Message Status"].strip().lower()
+        if status not in (STATUS_NOT_FIT.lower(), STATUS_REVIEW.lower()):
+            continue
+        notes = row.get(NOTES_HEADER, "")
+        if ("basis:" not in notes or RULE_MARKER in notes or notes.startswith(DONE_PREFIX)
+                or notes.startswith(REVIEW_PREFIX) or "Duplicate of row" in notes):
+            continue
+        if not row["Company Name"] or is_real_website(row["Website"]):
+            continue
+        updates = {
+            "Message Status": STATUS_SOURCED,
+            NOTES_HEADER: clip(f"{REQUEUE_PREFIX} {today} (was {row['Message Status']}) | {notes}", 600),
+        }
+        write_cells(sheet, headers, number, updates)
+        row.update(updates)
+        queued += 1
+        log(f"Row {number}: {row['Company Name']} -- has no website, so it goes back in the queue for the new rule.")
+    return queued
+
+
+# ---------------------------------------------------------------------
 # The main job
 # ---------------------------------------------------------------------
 def main():
@@ -969,18 +1130,16 @@ def main():
     headers = ensure_headers(sheet)
     rows = read_rows(sheet, headers)
 
-    waiting = [(n, r) for n, r in rows if r["Message Status"].lower() == STATUS_SOURCED.lower()]
+    waiting = []
     first_row_for_site = {}
     for number, row in rows:
         if is_real_website(row["Website"]):
             first_row_for_site.setdefault(site_key(row["Website"]), number)
 
     log(f"Connected to the Sheet as {robot_email}.")
-    log(f"{len(waiting)} business(es) are waiting for a fit-check. "
-        f"Limits for this run: {max_rows} checked, about ${max_spend:.2f} spent.\n")
 
     counts = {STATUS_FIT: 0, STATUS_NOT_FIT: 0, STATUS_REVIEW: 0}
-    duplicates = checked = websites_read = searches = handled = hand_finished = 0
+    duplicates = checked = websites_read = searches = handled = hand_finished = requeued = rule_applied = 0
     spent = 0.0
     problem = None
     stopped_for_spend = False
@@ -989,6 +1148,13 @@ def main():
     try:
         # 0) Rows a person has already looked at (the one-word check): tidy them up. This costs nothing.
         hand_finished = finish_hand_reviews(sheet, headers, rows, today)
+
+        # 0b) Rows with no website that the old rule rejected: back in the queue, once. Costs nothing.
+        requeued = requeue_old_no_website(sheet, headers, rows, today)
+
+        waiting = [(n, r) for n, r in rows if r["Message Status"].lower() == STATUS_SOURCED.lower()]
+        log(f"{len(waiting)} business(es) are waiting for a fit-check. "
+            f"Limits for this run: {max_rows} checked, about ${max_spend:.2f} spent.\n")
 
         # 1) Duplicates cost nothing, so deal with all of them first.
         candidates = []
@@ -1045,6 +1211,8 @@ def main():
             websites_read += 1 if basis and basis[0] == "website read" else 0
 
             extra = []
+            if row.get(NOTES_HEADER, "").startswith(REQUEUE_PREFIX):
+                extra.append(f"rechecked under the no-website rule (was {row[NOTES_HEADER].split('(was ', 1)[-1].split(')', 1)[0]})")
             updates = {}
             found = verdict["website_found"]
             current_site = row["Website"]
@@ -1073,6 +1241,21 @@ def main():
                     updates["Website"] = found
                     extra.append("website found by search" + (f" (the map listed {current_site})" if current_site else ""))
 
+            # The website and app rules (see the top of this file).
+            if not any(e.startswith("Duplicate of row") for e in extra):
+                hint = delivery_app_seen([current_site] + verdict["evidence"])
+                food = is_food_business(item, verdict)
+                ruled = apply_offer_rules(verdict, used, current_site, site_was_read, hint, food)
+                if ruled:
+                    new_icp, problem_text, rule_note = ruled
+                    icp_label = ICP_LABELS[new_icp]
+                    status = STATUS_FIT
+                    hand_check = False
+                    extra.append(rule_note)
+                    rule_applied += 1
+            if verdict.get("closed"):
+                extra.append("a source says it has closed")
+
             updates.update({
                 "ICP Match": icp_label,
                 "What They Do": what,
@@ -1097,11 +1280,13 @@ def main():
         f"### Fit-check run - {today}",
         f"- Script version: {SCRIPT_VERSION}",
         f"- Rows you checked by hand that the robot tidied up: {hand_finished}",
+        f"- Rows with no website put back in the queue for the new rule: {requeued}",
         f"- Businesses waiting at the start: **{len(waiting)}**",
         f"- Checked with Claude this run: **{checked}** (limit: {max_rows})",
         f"  - Fit-checked (look like a customer): {counts[STATUS_FIT]}",
         f"  - Not a fit: {counts[STATUS_NOT_FIT]} (including {duplicates} duplicate(s) skipped for free)",
         f"  - Needs review (a person should take a quick look): {counts[STATUS_REVIEW]}",
+        f"  - Marked Fit-checked by the website and app rules: {rule_applied}",
         f"- Websites read: {websites_read}; web searches made: {searches}",
         f"- Estimated spend this run: **${spent:.2f}** (limit: ${max_spend:.2f})",
         f"- Still waiting for a later run: {left}",
