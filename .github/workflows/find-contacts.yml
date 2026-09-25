@@ -36,4 +36,5 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MAX_ROWS_PER_RUN: ${{ github.event.inputs.max_rows }}
