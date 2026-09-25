@@ -11,11 +11,18 @@ What it does, in plain words:
      already recorded for that business. Nothing new is looked up or invented.
   5. Checks the draft in code (sender named early, booking link present,
      short, no blanks, no promises), then adds the fixed sign-off and opt-out.
-  6. Writes Draft Subject, Draft Body and Draft Notes, and sets the status to
-     'Draft ready' (or 'Needs review' / 'Bad email').
+  6. Writes Draft Subject, Draft Body and Draft Notes, and sets the status.
 
-It never sends anything. Sending is Phase 6, and only for rows a person
-has marked 'Approved'.
+Since version 2 it runs with no person involved:
+  Approved   the draft passed every check; the sender (Phase 6) sends it
+  Redo       the draft failed the checks; tried again on the next run, up to
+             3 times in all, then 'Not sent'
+  Not sent   final, with the reason in Draft Notes: no clear problem, the
+             facts were too thin, the draft kept failing, or the address was
+             a database guess that does not match the business's name
+  Bad email  the address is mistyped or its domain can't receive email
+
+It never sends anything itself.
 """
 
 import json
@@ -27,7 +34,7 @@ from datetime import datetime, timezone
 
 import requests
 
-SCRIPT_VERSION = "1 (22 Sep 2026)"
+SCRIPT_VERSION = "2 (25 Sep 2026)"
 
 # ---------------------------------------------------------------- settings
 MODEL = "claude-sonnet-5"
@@ -60,6 +67,12 @@ ST_REDO = "Redo"
 ST_DRAFT_READY = "Draft ready"
 ST_NEEDS_REVIEW = "Needs review"
 ST_BAD_EMAIL = "Bad email"
+ST_APPROVED = "Approved"        # set by this robot since version 2; the sender picks these up
+ST_NOT_SENT = "Not sent"        # final: this business will not be emailed (reason in Draft Notes)
+MAX_DRAFT_ATTEMPTS = 3          # runs in which a failing draft is retried before giving up
+# Where Phase 4 found the address (read from Contact Notes). The business published these itself,
+# so an address that doesn't look like the business's name is still trusted.
+TRUSTED_SOURCES = {"map", "website"}
 PICK_STATUSES = {ST_CONTACT_FOUND.lower(), ST_REDO.lower()}
 
 # Column headings (found by heading, never by position)
@@ -76,6 +89,7 @@ H_STATUS = "Message Status"
 H_SUBJECT = "Draft Subject"
 H_BODY = "Draft Body"
 H_DNOTES = "Draft Notes"
+H_CONTACT_NOTES = "Contact Notes"
 NEW_HEADINGS = [H_SUBJECT, H_BODY, H_DNOTES]
 REQUIRED_HEADINGS = [H_NAME, H_EMAIL, H_WHAT, H_PROBLEM, H_STATUS]
 
@@ -113,7 +127,7 @@ You will be given facts about ONE business, taken from our own research notes. E
 
 Write an email body that:
 - Starts with "Hi <first name>," if a contact name is given, otherwise "Hi,".
-- Within the first two sentences, says it is Abolaji from Trinata Ltd and, in a few words, what Trinata does.
+- Opens with two short sentences, not one joined with a comma: first "I'm Abolaji from Trinata Ltd." (or similar), then, in a few words, what Trinata does.
 - Names exactly ONE specific problem or opportunity, taken only from the Problem/Opportunity and What They Do facts. Describe it plainly and respectfully. Never insult the business.
 - Says in one sentence how Trinata could help with that problem, without promising results, prices, timelines, discounts or guarantees.
 - Invites them to book a 15-minute call using this exact link, written out in full: BOOKING_LINK_HERE
@@ -122,7 +136,7 @@ Write an email body that:
 
 Never invent anything that is not in the facts: no made-up reviews, ratings, numbers, customers, menu items, events, or claims about the business. If a fact sounds uncertain, leave it out. Write warm, clear, professional English with no hype words and no exclamation marks.
 
-The subject line must be under 60 characters, specific to this business, and not clickbait or all capitals.
+The subject line must be under 60 characters, name the actual problem or opportunity for this business (for example "A website for Ghana High" or "A shopping app for Phone Hub"), and not be generic, clickbait or all capitals.
 
 If the facts are too thin to name one real problem, return {"skip": "<short reason>"} instead.
 
@@ -469,9 +483,9 @@ def draft_one(api_key, rowd, post=None):
     problem = (rowd.get(H_PROBLEM) or "").strip()
     if not problem or problem.upper().startswith("REVIEW") or \
             problem.lower().startswith("not enough information"):
-        return (ST_NEEDS_REVIEW, "", "",
-                "No clear problem recorded for this business, so no draft "
-                "was written.", 0.0)
+        return (ST_NOT_SENT, "", "",
+                "No clear problem recorded for this business, so no email "
+                "will be written or sent.", 0.0)
 
     contact = (rowd.get(H_CONTACT_NAME) or "").strip()
     facts = [
@@ -495,19 +509,32 @@ def draft_one(api_key, rowd, post=None):
         if err:
             return (None, "", "", err, total_cost)
         if "skip" in parsed and not parsed.get("body"):
-            return (ST_NEEDS_REVIEW, "", "",
-                    "Claude said the facts are too thin: %s"
+            return (ST_NOT_SENT, "", "",
+                    "Not sent, Claude said the facts are too thin: %s"
                     % clip(str(parsed.get("skip")), 200), total_cost)
         subject = CITE_RE.sub("", str(parsed.get("subject", ""))).strip()
         body = CITE_RE.sub("", str(parsed.get("body", ""))).strip()
         problems = check_draft(subject, body)
         if not problems:
-            return (ST_DRAFT_READY, subject, finish_body(body),
-                    "Draft passed all checks.", total_cost)
+            return (ST_APPROVED, subject, finish_body(body),
+                    "Draft passed all checks and was approved automatically.",
+                    total_cost)
         feedback = "; ".join(problems)
-    return (ST_NEEDS_REVIEW, subject, finish_body(body) if body else "",
-            "REVIEW: draft failed checks twice: " + "; ".join(problems),
+    return (ST_REDO, subject, finish_body(body) if body else "",
+            "draft failed checks twice: " + "; ".join(problems),
             total_cost)
+
+
+def contact_source(rowd):
+    """Where Phase 4 found the address, e.g. 'map', 'website', 'hunter', 'apollo' ('' if unknown)."""
+    m = re.search(r"source:\s*([A-Za-z]+)", rowd.get(H_CONTACT_NOTES, "") or "")
+    return m.group(1).lower() if m else ""
+
+
+def previous_attempts(rowd):
+    """How many runs have already tried and failed to draft this row."""
+    m = re.search(r"auto-retry (\d+) of", rowd.get(H_DNOTES, "") or "")
+    return int(m.group(1)) if m else 0
 
 
 def main():
@@ -535,7 +562,7 @@ def main():
         if status in PICK_STATUSES:
             waiting.append((i, rowd))
 
-    counts = {"checked": 0, ST_DRAFT_READY: 0, ST_NEEDS_REVIEW: 0,
+    counts = {"checked": 0, ST_APPROVED: 0, ST_REDO: 0, ST_NOT_SENT: 0,
               ST_BAD_EMAIL: 0, "email_flagged": 0, "skipped": 0}
     spent = 0.0
     details = []
@@ -578,9 +605,24 @@ def main():
 
         email_warning = ""
         if not name_matches(email, name, rowd.get(H_WEBSITE, "")):
-            email_warning = ("CHECK EMAIL FIRST: %s does not obviously belong "
-                             "to %s. " % (email, name))
+            source = contact_source(rowd)
             counts["email_flagged"] += 1
+            if source not in TRUSTED_SOURCES:
+                # A database's guess that doesn't look like this business: never emailed.
+                ok = write_row(ws, headers, row_num, name, {
+                    H_STATUS: ST_NOT_SENT,
+                    H_DNOTES: clip(stamp + "Not sent: %s does not obviously belong to "
+                                   "%s and came from %s, not from the business itself."
+                                   % (email, name, source or "an unknown source"))})
+                if ok:
+                    counts[ST_NOT_SENT] += 1
+                    details.append("%s: Not sent (address doubtful)" % name)
+                else:
+                    counts["skipped"] += 1
+                continue
+            email_warning = ("Note: %s does not obviously match the name, but the "
+                             "business published it itself (source: %s). "
+                             % (email, source))
 
         status, subject, body, note, cost = draft_one(api_key, rowd)
         spent += cost
@@ -589,8 +631,22 @@ def main():
             details.append("%s: left for next run (%s)" % (name, note))
             continue
 
-        notes = email_warning + stamp + "email check: " + detail + " | " + \
-            note + " | model %s, cost $%.4f" % (MODEL, cost)
+        if status == ST_REDO:
+            tried = previous_attempts(rowd) + 1
+            if tried >= MAX_DRAFT_ATTEMPTS:
+                status = ST_NOT_SENT
+                note = "Not sent, the %s after %d runs" % (note, tried)
+            else:
+                # the retry count goes first, so a long note can never cut it off
+                note = "auto-retry %d of %d on the next run | %s" % (
+                    tried, MAX_DRAFT_ATTEMPTS - 1, note)
+
+        if status == ST_REDO:
+            notes = stamp + note + " | " + email_warning + "email check: " + \
+                detail + " | model %s, cost $%.4f" % (MODEL, cost)
+        else:
+            notes = email_warning + stamp + "email check: " + detail + " | " + \
+                note + " | model %s, cost $%.4f" % (MODEL, cost)
         ok = write_row(ws, headers, row_num, name, {
             H_SUBJECT: subject,
             H_BODY: body,
@@ -602,8 +658,7 @@ def main():
             details.append("%s: row moved while running, left alone" % name)
             continue
         counts[status] += 1
-        details.append("%s: %s%s" % (name, status,
-                                     " (check email)" if email_warning else ""))
+        details.append("%s: %s" % (name, status))
 
     remaining = max(0, len(waiting) - counts["checked"])
     report = [
@@ -612,10 +667,11 @@ def main():
         "- Script version: " + SCRIPT_VERSION,
         "- Businesses waiting for a draft: %d" % len(waiting),
         "- Checked this run: %d (limit %d)" % (counts["checked"], max_rows),
-        "- Draft ready: %d" % counts[ST_DRAFT_READY],
-        "- Needs review: %d" % counts[ST_NEEDS_REVIEW],
+        "- Approved automatically (the sender will send these): %d" % counts[ST_APPROVED],
+        "- Redo (draft failed, tried again next run): %d" % counts[ST_REDO],
+        "- Not sent (final, reason in Draft Notes): %d" % counts[ST_NOT_SENT],
         "- Bad email (not drafted): %d" % counts[ST_BAD_EMAIL],
-        "- Drafts with an email to double-check: %d" % counts["email_flagged"],
+        "- Addresses that don't match the name: %d" % counts["email_flagged"],
         "- Left for a later run: %d" % (counts["skipped"] + remaining),
         "- Claude cost this run: about $%.4f (cap $%.2f)" % (spent,
                                                              SPEND_CAP_PER_RUN),
