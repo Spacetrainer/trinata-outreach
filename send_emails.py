@@ -4,15 +4,18 @@ Trinata Outreach - Phase 6: the sender.
 
 What it does, in plain words:
   1. Opens the 'Trinata Outreach' Sheet.
-  2. Finds rows whose Message Status is 'Approved' (a person typed it).
+  2. Finds rows whose Message Status is 'Approved' (set by the drafting robot;
+     since version 2 no person is involved anywhere).
   3. Checks each one again just before sending: the email address is still
      written properly and its domain can receive mail, this address has never
      been emailed before, and the draft still has its sign-off and the
      'no thanks' opt-out line with no leftover blanks.
   4. Marks the row 'Sending', sends the email from hello@trinata.org through
      Zoho, then marks it 'Sent' with today's date. If anything goes wrong in
-     between, the row is never sent twice: a row stuck on 'Sending' is left for
-     a person to look at.
+     between, the row is never sent twice: a row still on 'Sending' from an
+     earlier run is marked 'Sent (unconfirmed)' by itself and never retried.
+  Rows that fail the last-minute checks are marked 'Not sent' (final, reason
+  in Send Notes) or 'Bad email'.
   5. Sends at most 10 emails a day (Lagos time), with a pause between each.
 
 Test mode: if TEST_SEND_TO is set, it sends ONE approved draft to that address
@@ -32,7 +35,7 @@ from email.utils import formataddr, formatdate, make_msgid
 
 import draft_messages as dm  # the Phase 5 file: shared email checks
 
-SCRIPT_VERSION = "1 (23 Sep 2026)"
+SCRIPT_VERSION = "2 (25 Sep 2026)"
 
 # ---------------------------------------------------------------- settings
 SENDER_EMAIL = "hello@trinata.org"
@@ -58,6 +61,8 @@ ST_SENDING = "Sending"
 ST_SENT = "Sent"
 ST_BAD_EMAIL = "Bad email"
 ST_NEEDS_REVIEW = "Needs review"
+ST_NOT_SENT = "Not sent"                     # final: will not be emailed (reason in Send Notes)
+ST_UNCONFIRMED = "Sent (unconfirmed)"        # the robot stopped mid-send; never sent again
 
 # Column headings (found by heading, never by position)
 H_NAME = "Company Name"
@@ -367,13 +372,24 @@ def run(ws, grid, password, max_emails, test_to="", connect=None,
         status = (rowd.get(H_STATUS) or "").strip().lower()
         email = (rowd.get(H_EMAIL) or "").strip().lower()
         first_sent = (rowd.get(H_FIRST_SENT) or "").strip()
-        if first_sent or status in (ST_SENT.lower(), ST_SENDING.lower()):
+        if first_sent or status in (ST_SENT.lower(), ST_SENDING.lower(), ST_UNCONFIRMED.lower()):
             if email:
                 already_emailed.add(email)
         if first_sent == today:
             sent_today += 1
         if status == ST_SENDING.lower():
             stuck.append("%s (row %d)" % (rowd.get(H_NAME, ""), i))
+
+    # Rows still on 'Sending' were left by an earlier run that stopped part-way. The email may or may
+    # not have gone out, so they are never sent again: marked 'Sent (unconfirmed)' with no one involved.
+    if stuck and not test_to:
+        for i, rowd in rows:
+            if (rowd.get(H_STATUS) or "").strip().lower() == ST_SENDING.lower():
+                write_row(ws, headers, i, rowd.get(H_NAME, ""), {
+                    H_STATUS: ST_UNCONFIRMED,
+                    H_SEND_NOTES: clip("%s | v%s | An earlier run stopped while sending, so it is "
+                                       "not known whether this email went out. It will not be "
+                                       "sent again." % (today, SCRIPT_VERSION.split()[0]))})
 
     approved = [(i, r) for i, r in rows
                 if (r.get(H_STATUS) or "").strip().lower() == ST_APPROVED.lower()]
@@ -403,15 +419,14 @@ def run(ws, grid, password, max_emails, test_to="", connect=None,
                     counts["later"] += 1
                     details.append("%s: left for next run (%s)" % (name, reason))
                     continue
-                new_status = ST_BAD_EMAIL if verdict == "bad_email" else ST_NEEDS_REVIEW
+                new_status = ST_BAD_EMAIL if verdict == "bad_email" else ST_NOT_SENT
                 key = "bad" if verdict == "bad_email" else "review"
                 counts[key] += 1
                 details.append("%s: %s (%s)" % (name, new_status, reason))
                 if not test_to:
-                    prefix = "REVIEW: " if verdict == "review" else ""
                     write_row(ws, headers, row_num, name, {
                         H_STATUS: new_status,
-                        H_SEND_NOTES: clip(prefix + stamp + "Not sent: " + reason)})
+                        H_SEND_NOTES: clip(stamp + "Not sent: " + reason)})
                 continue
 
             to_addr = test_to or email
@@ -484,15 +499,15 @@ def run(ws, grid, password, max_emails, test_to="", connect=None,
         "- Sent this run: %d%s" % (counts["sent"],
                                    " (test email only)" if test_to else ""),
         "- Marked Bad email: %d" % counts["bad"],
-        "- Marked Needs review: %d" % counts["review"],
+        "- Marked Not sent (final, reason in Send Notes): %d" % counts["review"],
         "- Left for a later run: %d" % counts["later"],
     ]
     if not test_to and allowance == 0 and approved:
         report.append("- Nothing sent: today's limit of %d is already reached."
                       % DAILY_LIMIT)
     if stuck:
-        report.append("- ATTENTION, stuck on 'Sending' (check Zoho's Sent folder, "
-                      "then type Sent or Approved): " + ", ".join(stuck))
+        report.append("- Found still on 'Sending' from an earlier run, marked 'Sent (unconfirmed)' "
+                      "and never sent again: " + ", ".join(stuck))
     if stop_reason:
         report.append("- STOPPED EARLY: " + stop_reason)
     if details:
