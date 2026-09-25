@@ -17,10 +17,11 @@ WHAT IT DOES, IN PLAIN WORDS
     4. Changes Message Status so later steps know what to do:
          Fit-checked   looks like one of the five ICPs
          Not a fit     doesn't, or is a duplicate of another row
-         Needs review  Claude wasn't sure, or couldn't open the website itself:
-                       worth a quick human look
+       Since version 6 the robot decides every row by itself: nothing is left
+       for a person. If Claude can't tell what the business needs, the row is
+       set to Not a fit (the reason is in Fit-check Notes).
     5. THE WEBSITE AND APP RULES (version 4, widened in version 5). The robot
-       marks these Fit-checked by itself, with no one-word check:
+       marks these Fit-checked by itself:
          a) No website can be traced -- not its own, not a parent chain's or
             hotel's -- so it NEEDS one, however busy it is on Instagram or
             delivery apps.
@@ -34,9 +35,9 @@ WHAT IT DOES, IN PLAIN WORDS
        Exceptions: a business a source says has closed, and a branch covered by
        a parent chain's, hotel's or mall's website. Rows rejected under the old
        rules are put back in the queue once, automatically, and checked again.
-    6. The one-word check: for a Needs review row whose Fit-check Notes start with
-       REVIEW:, open the website and type just Fit-checked or Not a fit in Message
-       Status. The next run fills in the rest of that row by itself.
+    6. Rows left on Needs review by older versions are put back in the queue once,
+       automatically, and decided by the robot. If a person ever does type
+       Fit-checked or Not a fit on such a row, the robot still respects it.
 
 It runs by itself every morning (see .github/workflows/fit-check.yml) and can
 also be started by hand from the GitHub "Actions" tab.
@@ -81,14 +82,14 @@ from google.auth.exceptions import GoogleAuthError
 # 1. SETTINGS YOU MIGHT WANT TO CHANGE
 # ---------------------------------------------------------------------
 MODEL = "claude-haiku-4-5-20251001"     # Claude's cheapest current model
-USE_WEB_SEARCH = True                   # False = never search; rows with no website go to "Needs review"
+USE_WEB_SEARCH = True                   # False = never search; rows with no website are decided from the map alone
 DEFAULT_MAX_ROWS_PER_RUN = 10           # businesses checked per run
 DEFAULT_MAX_SPEND_PER_RUN = 0.50        # dollars; the run stops once its estimate passes this
 
 # True  = if a business HAS a website but the robot could not open it itself (many sites block robots),
 #         a "None" verdict is not trusted on its own: the row goes to "Needs review" for a quick human look.
-# False = the robot decides alone from what its web search says.
-REVIEW_UNREAD_REJECTIONS = True
+# False = the robot decides alone from what its web search says. (Version 6: fully automatic, so False.)
+REVIEW_UNREAD_REJECTIONS = False
 
 # Only used for the cost estimate in the report (dollars per million tokens, and per search)
 PRICE_INPUT_PER_MILLION = 1.00
@@ -98,7 +99,7 @@ PRICE_PER_SEARCH = 0.01
 # ---------------------------------------------------------------------
 # 2. THINGS YOU SHOULDN'T NEED TO TOUCH
 # ---------------------------------------------------------------------
-SCRIPT_VERSION = "5 (25 Sep 2026)"      # shown in each run report, so you can tell which copy is live
+SCRIPT_VERSION = "6 (25 Sep 2026)"      # shown in each run report, so you can tell which copy is live
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
@@ -791,9 +792,9 @@ def normalise_found_website(text):
 
 
 def decide_status(icp, confidence):
-    if icp == "Unclear" or confidence == "low":
-        return STATUS_REVIEW
-    return STATUS_NOT_FIT if icp == "None" else STATUS_FIT
+    """Fully automatic since version 6: a named profile is a fit, anything else is not.
+    (The website and app rules can still turn a 'None' or 'Unclear' into a fit afterwards.)"""
+    return STATUS_NOT_FIT if icp in ("None", "Unclear") else STATUS_FIT
 
 
 # ---------------------------------------------------------------------
@@ -1085,19 +1086,25 @@ def apply_offer_rules(verdict, used, current_site, site_was_read, delivery_hint,
 
 
 def requeue_old_no_website(sheet, headers, rows, today):
-    """Once only: put rows that were rejected (or left unsure) under the old rule, and that have no
-    website, back in the queue so the new rule can judge them. A person's own decision, duplicates and
-    rows already judged under version 4 are left alone. Costs nothing by itself."""
+    """Once only: put back in the queue (a) rows rejected under the old rule that have no website, so the
+    new rules can judge them, and (b) every row an older version left on Needs review, so the robot can
+    decide it alone. A person's own decision, duplicates and rows already judged under version 4 or later
+    are left alone. Costs nothing by itself."""
     queued = 0
     for number, row in rows:
         status = row["Message Status"].strip().lower()
         if status not in (STATUS_NOT_FIT.lower(), STATUS_REVIEW.lower()):
             continue
         notes = row.get(NOTES_HEADER, "")
-        if ("basis:" not in notes or RULE_MARKER in notes or notes.startswith(DONE_PREFIX)
-                or notes.startswith(REVIEW_PREFIX) or "Duplicate of row" in notes):
+        if not row["Company Name"] or notes.startswith(DONE_PREFIX) or "basis:" not in notes:
             continue
-        if not row["Company Name"] or is_real_website(row["Website"]):
+        if status == STATUS_REVIEW.lower():
+            # Left for a person by an older version: the robot now decides it alone. Rows that later
+            # robots (drafting, sending) have already written to are not the fit-check's to reopen.
+            if row.get("Draft Notes", "") or row.get("Send Notes", ""):
+                continue
+        elif (RULE_MARKER in notes or notes.startswith(REVIEW_PREFIX) or "Duplicate of row" in notes
+              or is_real_website(row["Website"])):
             continue
         updates = {
             "Message Status": STATUS_SOURCED,
@@ -1106,7 +1113,7 @@ def requeue_old_no_website(sheet, headers, rows, today):
         write_cells(sheet, headers, number, updates)
         row.update(updates)
         queued += 1
-        log(f"Row {number}: {row['Company Name']} -- has no website, so it goes back in the queue for the new rule.")
+        log(f"Row {number}: {row['Company Name']} -- goes back in the queue to be decided under the new rules.")
     return queued
 
 
@@ -1161,11 +1168,11 @@ def main():
         for number, row in waiting:
             if not row["Company Name"]:
                 write_cells(sheet, headers, number, {
-                    "Message Status": STATUS_REVIEW,
+                    "Message Status": STATUS_NOT_FIT,
                     NOTES_HEADER: make_notes(today, {"confidence": "low", "evidence": [], "note": ""},
                                              ["no company name"], []),
                 })
-                counts[STATUS_REVIEW] += 1
+                counts[STATUS_NOT_FIT] += 1
                 handled += 1
                 continue
             site = row["Website"]
@@ -1280,12 +1287,11 @@ def main():
         f"### Fit-check run - {today}",
         f"- Script version: {SCRIPT_VERSION}",
         f"- Rows you checked by hand that the robot tidied up: {hand_finished}",
-        f"- Rows with no website put back in the queue for the new rule: {requeued}",
+        f"- Older rows put back in the queue for the new rules: {requeued}",
         f"- Businesses waiting at the start: **{len(waiting)}**",
         f"- Checked with Claude this run: **{checked}** (limit: {max_rows})",
         f"  - Fit-checked (look like a customer): {counts[STATUS_FIT]}",
         f"  - Not a fit: {counts[STATUS_NOT_FIT]} (including {duplicates} duplicate(s) skipped for free)",
-        f"  - Needs review (a person should take a quick look): {counts[STATUS_REVIEW]}",
         f"  - Marked Fit-checked by the website and app rules: {rule_applied}",
         f"- Websites read: {websites_read}; web searches made: {searches}",
         f"- Estimated spend this run: **${spent:.2f}** (limit: ${max_spend:.2f})",
