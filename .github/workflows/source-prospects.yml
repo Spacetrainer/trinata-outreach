@@ -1,19 +1,20 @@
-name: Source Prospects (Weekly)
+name: Source Prospects (Daily)
 
 # WHEN THIS RUNS
-#   - Automatically, every Monday at 06:00 UTC (that is 7:00 am in Lagos).
+#   - Automatically, every day at 06:00 UTC (that is 7:00 am in Lagos),
+#     two hours before the fit-check robot.
 #   - Any time you like: open the Actions tab, click "Source Prospects
-#     (Weekly)", press "Run workflow". You can type a smaller number in the
-#     box (for example 5) for a quick test.
+#     (Daily)", press "Run workflow". You can type a different number in the
+#     box (for example 3) for a quick test.
 on:
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       max_new:
-        description: "How many new restaurants to add to the Sheet this run"
+        description: "How many new businesses to add to the Sheet this run"
         required: false
-        default: "25"
+        default: "7"
 
 # Only one sourcing run at a time, so two runs can never write to the Sheet together.
 concurrency:
@@ -40,9 +41,9 @@ jobs:
       - name: Install the tools the script needs
         run: pip install requests "gspread>=6.0,<7"
 
-      - name: Find new restaurants and add them to the Sheet
+      - name: Find new businesses and add them to the Sheet
         env:
           GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          MAX_NEW_PER_RUN: ${{ github.event.inputs.max_new || '25' }}
+          MAX_NEW_PER_RUN: ${{ github.event.inputs.max_new || '7' }}
         run: python source_prospects.py
