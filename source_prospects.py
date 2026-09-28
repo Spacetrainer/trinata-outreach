@@ -5,17 +5,27 @@ Trinata prospect sourcing robot -- Phase 2 (free OpenStreetMap version)
 
 WHAT IT DOES, IN PLAIN WORDS
   1. Asks OpenStreetMap -- a free, community-built map, a bit like Google
-     Maps that anyone may use and save -- for every restaurant in Lagos.
+     Maps that anyone may use and save -- ONCE per run for every business in
+     Lagos in the sub-sectors listed below: food (restaurants, cafes, bars)
+     and, since version 2, retail (supermarkets, fashion, electronics,
+     furniture, pharmacies and other shops).
   2. Throws out chain outlets (big brands with many branches) and anything
      without a name.
   3. Adds the best NEW ones to your "Trinata Outreach" Google Sheet, up to
-     a fixed number per run (25 unless you change it), each marked
-     Message Status = Sourced. "Best" means the restaurants with the most
-     contact details on the map come first: website, then email, then phone.
-  4. Never adds the same restaurant twice.
+     a fixed number per run (7 unless you change it), each marked
+     Message Status = Sourced. It takes them in turn from each sub-sector,
+     so every day brings a mix. Within a sub-sector, the businesses with the
+     most contact details on the map come first: website, email, then phone.
+  4. Never adds the same business twice.
 
-It runs by itself every Monday (see .github/workflows/source-prospects.yml)
-and can also be started by hand from the GitHub "Actions" tab.
+Since version 2 it runs by itself EVERY morning (see
+.github/workflows/source-prospects.yml), not just on Mondays, and can also be
+started by hand from the GitHub "Actions" tab.
+
+WHY 7 A DAY
+  Every business added later costs about 3 cents of Claude time (checking it,
+  finding a contact, writing a message). 7 a day is about $7 a month, which
+  keeps the whole automation under $10 a month with Zoho included.
 
 WHY OPENSTREETMAP INSTEAD OF GOOGLE MAPS
   Google's terms do not allow copying and saving business names and
@@ -26,7 +36,7 @@ WHY OPENSTREETMAP INSTEAD OF GOOGLE MAPS
 
 WHAT TO KNOW ABOUT THE DATA
   - OpenStreetMap is built by volunteers, so it is patchier than Google:
-    many restaurants list no website, phone or email, and a few entries are
+    many businesses list no website, phone or email, and a few entries are
     out of date. "No website listed here" does NOT prove a business has no
     website -- the fit-check step (Phase 3) looks properly.
   - The robot never guesses or invents anything. It writes only what the
@@ -39,7 +49,7 @@ THE TWO SECRETS THIS NEEDS (kept in GitHub, never written in this file)
 GOOD TO KNOW
   - The pace limit (MAX_NEW_PER_RUN) keeps the Sheet from filling with
     hundreds of rows at once, and keeps the later, paid AI steps affordable.
-  - Don't want a restaurant? Don't delete its row (it would be added again
+  - Don't want a business? Don't delete its row (it would be added again
     on a later run). Type SKIP in its Message Status cell instead.
   - To widen the pilot later, add a sub-sector to PILOT_SUBSECTORS and give
     it an entry in SUBSECTORS below. The full sector list stays in your
@@ -62,19 +72,38 @@ from google.auth.exceptions import GoogleAuthError
 # ---------------------------------------------------------------------
 CITY_LABEL = "Lagos, Nigeria"
 
-# Only these sub-sectors are searched right now.
-PILOT_SUBSECTORS = ["Restaurants"]
+SCRIPT_VERSION = "2 (28 Sep 2026)"      # shown in each run report, so you can tell which copy is live
+
+# Only these sub-sectors are searched right now, taken in turn in this order.
+# The names match your master sector list. Remove a name to stop sourcing it.
+PILOT_SUBSECTORS = [
+    "Restaurants", "Supermarkets", "Fashion Retail", "Cafes", "Electronics Retail",
+    "Pharmacy Retail", "Bars", "Furniture Retail", "Grocery Stores", "Specialty Retail",
+]
 
 # For each sub-sector: which sector it sits under in your master list, and
-# how OpenStreetMap labels that kind of place.
+# how OpenStreetMap labels that kind of place. (The fit-check robot treats
+# Restaurants, Cafes and Bars as food: website offer only. The rest are
+# retail: a website and/or a shopping app.)
 SUBSECTORS = {
-    "Restaurants": {
-        "sector": "Hospitality & Tourism",
-        "osm_tags": [("amenity", "restaurant")],
-    },
-    # Examples to switch on later (also add the name to PILOT_SUBSECTORS):
-    # "Cafes": {"sector": "Hospitality & Tourism", "osm_tags": [("amenity", "cafe")]},
-    # "Hotels": {"sector": "Hospitality & Tourism", "osm_tags": [("tourism", "hotel")]},
+    "Restaurants": {"sector": "Hospitality & Tourism",
+                    "osm_tags": [("amenity", "restaurant"), ("amenity", "fast_food")]},
+    "Cafes": {"sector": "Hospitality & Tourism", "osm_tags": [("amenity", "cafe")]},
+    "Bars": {"sector": "Hospitality & Tourism", "osm_tags": [("amenity", "bar"), ("amenity", "pub")]},
+    "Supermarkets": {"sector": "Retail & Wholesale", "osm_tags": [("shop", "supermarket")]},
+    "Grocery Stores": {"sector": "Retail & Wholesale", "osm_tags": [("shop", "convenience")]},
+    "Fashion Retail": {"sector": "Retail & Wholesale",
+                       "osm_tags": [("shop", "clothes"), ("shop", "shoes"), ("shop", "boutique"),
+                                    ("shop", "fashion")]},
+    "Electronics Retail": {"sector": "Retail & Wholesale",
+                           "osm_tags": [("shop", "electronics"), ("shop", "mobile_phone"),
+                                        ("shop", "computer")]},
+    "Furniture Retail": {"sector": "Retail & Wholesale", "osm_tags": [("shop", "furniture")]},
+    "Pharmacy Retail": {"sector": "Retail & Wholesale",
+                        "osm_tags": [("amenity", "pharmacy"), ("shop", "chemist")]},
+    "Specialty Retail": {"sector": "Retail & Wholesale",
+                         "osm_tags": [("shop", "cosmetics"), ("shop", "jewelry"), ("shop", "hardware"),
+                                      ("shop", "car_parts")]},
 }
 
 # Where "Lagos" is. First choice: Lagos State's official outline in
@@ -86,7 +115,7 @@ LAGOS_BOX = (6.38, 3.10, 6.75, 3.75)
 # ---------------------------------------------------------------------
 # 2. PACE AND POLITENESS
 # ---------------------------------------------------------------------
-DEFAULT_MAX_NEW_PER_RUN = 25   # new rows added to the Sheet per run
+DEFAULT_MAX_NEW_PER_RUN = 7    # new rows added to the Sheet per run (one run a day)
 ROWS_PER_SAVE = 100            # rows written to the Sheet in one go
 PAUSE_BETWEEN_SERVERS = 5      # seconds to wait before trying another map server
 
@@ -96,7 +125,7 @@ OVERPASS_SERVERS = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ]
-USER_AGENT = "Trinata-Outreach-Sourcing/1.0 (https://trinata.org)"
+USER_AGENT = "Trinata-Outreach-Sourcing/2.0 (https://trinata.org)"
 
 # ---------------------------------------------------------------------
 # 3. HOW THE SHEET IS LAID OUT
@@ -134,7 +163,7 @@ def first_value(text):
 
 
 def name_key(name):
-    """A restaurant's name boiled down for spotting duplicates."""
+    """A business name boiled down for spotting duplicates."""
     return re.sub(r"[^a-z0-9]+", "", clean(name).lower())
 
 
@@ -162,7 +191,7 @@ def read_max_new():
             raise ValueError
     except ValueError:
         raise SourcingError(
-            f"The number of new restaurants per run must be a whole number of 1 or more, but it was '{raw}'."
+            f"The number of new businesses per run must be a whole number of 1 or more, but it was '{raw}'."
         )
     return number
 
@@ -183,7 +212,7 @@ def build_query(osm_tags, use_outline):
     for key, value in osm_tags:
         for kind in ("node", "way"):
             lines.append(f'  {kind}["{key}"="{value}"]{scope};')
-    return "[out:json][timeout:120];\n" + setup + "\n(\n" + "\n".join(lines) + "\n);\nout center;"
+    return "[out:json][timeout:180];\n" + setup + "\n(\n" + "\n".join(lines) + "\n);\nout center;"
 
 
 def run_overpass(query):
@@ -238,9 +267,19 @@ def fetch_elements(osm_tags):
             return elements, label
         log(f"  The {label} found nothing; trying the next method...")
     raise SourcingError(
-        "OpenStreetMap answered but listed no restaurants for Lagos. That is "
+        "OpenStreetMap answered but listed no businesses for Lagos. That is "
         "unexpected. Nothing was changed. Tell Claude what the run page says."
     )
+
+
+def subsector_of(element, subsectors):
+    """Which of our sub-sectors this map entry belongs to (the first that matches), or ''."""
+    tags = element.get("tags") or {}
+    for name in subsectors:
+        for key, value in SUBSECTORS[name]["osm_tags"]:
+            if clean(tags.get(key)) == value:
+                return name
+    return ""
 
 
 def parse_element(element):
@@ -298,6 +337,32 @@ def choose_new(candidates, known_ids, known_names, limit):
             chosen.append(candidate)
         else:
             waiting += 1
+    return chosen, waiting
+
+
+def choose_mixed(by_subsector, order, known_ids, known_names, limit):
+    """Take new businesses in turn from each sub-sector (best first within each), so a run brings a
+    mix. Returns ([(subsector, candidate), ...], {subsector: number still waiting})."""
+    queues = {}
+    for name in order:
+        fresh, _ = choose_new(by_subsector.get(name, []), known_ids, known_names, 10 ** 9)
+        queues[name] = fresh
+    chosen, seen = [], set()
+    while len(chosen) < limit and any(queues[n] for n in order):
+        for name in order:
+            if len(chosen) >= limit:
+                break
+            while queues[name]:
+                candidate = queues[name].pop(0)
+                key = name_key(candidate["name"])
+                if key in seen:          # the same name listed under two sub-sectors
+                    continue
+                seen.add(key)
+                chosen.append((name, candidate))
+                break
+    waiting = {}
+    for name in order:
+        waiting[name] = sum(1 for c in queues[name] if name_key(c["name"]) not in seen)
     return chosen, waiting
 
 
@@ -384,7 +449,7 @@ def ensure_headers(sheet):
 
 
 def load_known(sheet, headers):
-    """Which restaurants are already in the Sheet (by map ID and by name)."""
+    """Which businesses are already in the Sheet (by map ID and by name)."""
     ids_column = headers.index("Source ID") + 1
     names_column = headers.index("Company Name") + 1
     ids = {clean(v) for v in sheets_call(sheet.col_values, ids_column)[1:] if clean(v)}
@@ -446,53 +511,57 @@ def main():
     known_ids, known_names = load_known(prospects, headers)
 
     log(f"Connected to the Sheet as {robot_email}.")
-    log(f"Pace limit for this run: {max_new} new restaurant(s).\n")
+    log(f"Pace limit for this run: {max_new} new business(es).\n")
 
-    listed = no_name = chains = added = waiting = 0
-    with_site = with_email = with_phone = 0
-    method_used = ""
-    room_left = max_new
+    all_tags = []
+    for name in PILOT_SUBSECTORS:
+        for pair in SUBSECTORS[name]["osm_tags"]:
+            if pair not in all_tags:
+                all_tags.append(pair)
+    elements, method_used = fetch_elements(all_tags)      # ONE question to the map per run
+    listed = len(elements)
 
-    for subsector in PILOT_SUBSECTORS:
-        info = SUBSECTORS[subsector]
-        elements, method_used = fetch_elements(info["osm_tags"])
-        listed += len(elements)
+    no_name = chains = 0
+    by_subsector = {name: [] for name in PILOT_SUBSECTORS}
+    for element in elements:
+        subsector = subsector_of(element, PILOT_SUBSECTORS)
+        if not subsector:
+            continue
+        parsed = parse_element(element)
+        if parsed.get("skip") == "no_name":
+            no_name += 1
+        elif parsed.get("skip") == "chain":
+            chains += 1
+        else:
+            by_subsector[subsector].append(parsed)
+    candidates = [c for name in PILOT_SUBSECTORS for c in by_subsector[name]]
+    with_site = sum(1 for c in candidates if c["website"])
+    with_email = sum(1 for c in candidates if c["email"])
+    with_phone = sum(1 for c in candidates if c["phone"])
 
-        candidates = []
-        for element in elements:
-            parsed = parse_element(element)
-            if parsed.get("skip") == "no_name":
-                no_name += 1
-            elif parsed.get("skip") == "chain":
-                chains += 1
-            else:
-                candidates.append(parsed)
-        with_site += sum(1 for c in candidates if c["website"])
-        with_email += sum(1 for c in candidates if c["email"])
-        with_phone += sum(1 for c in candidates if c["phone"])
+    chosen, waiting_by = choose_mixed(by_subsector, PILOT_SUBSECTORS, known_ids, known_names, max_new)
+    rows = [build_row(headers, c, SUBSECTORS[name]["sector"], name, today) for name, c in chosen]
+    if rows:
+        save_rows(prospects, rows)
+    added = len(chosen)
+    waiting = sum(waiting_by.values())
+    added_by = {name: sum(1 for n, _ in chosen if n == name) for name in PILOT_SUBSECTORS}
+    for name in PILOT_SUBSECTORS:
+        log(f"{name}: {added_by[name]} added, {waiting_by[name]} still waiting.")
 
-        chosen, still_waiting = choose_new(candidates, known_ids, known_names, room_left)
-        rows = [build_row(headers, c, info["sector"], subsector, today) for c in chosen]
-        if rows:
-            save_rows(prospects, rows)
-        for c in chosen:
-            known_ids.add(c["source_id"])
-            known_names.add(name_key(c["name"]))
-        added += len(chosen)
-        waiting += still_waiting
-        room_left -= len(chosen)
-        log(f"{subsector}: {len(chosen)} added, {still_waiting} still waiting.")
-
-    usable = listed - no_name - chains
+    usable = len(candidates)
     lines = [
         f"### Prospect sourcing run - {today}",
-        f"- OpenStreetMap listed **{listed}** places for {', '.join(PILOT_SUBSECTORS)} in {CITY_LABEL} "
-        f"(found using the {method_used}).",
+        f"- Script version: {SCRIPT_VERSION}",
+        f"- OpenStreetMap listed **{listed}** places in {CITY_LABEL} (found using the {method_used}).",
         f"- Skipped: {no_name} with no name, {chains} chain outlets.",
         f"- Of the {usable} that are left: {with_site} list a website, {with_email} an email, "
         f"{with_phone} a phone number.",
         f"- New businesses added to the Sheet: **{added}** (limit this run: {max_new}).",
-        f"- Still waiting to be added on later runs: {waiting}.",
+        "- Added by sub-sector: " + (", ".join(f"{n} {added_by[n]}" for n in PILOT_SUBSECTORS if added_by[n])
+                                     or "none"),
+        f"- Still waiting to be added on later runs: {waiting} "
+        f"(at {max_new} a day, about {-(-waiting // max_new) if max_new else 0} days' worth).",
     ]
     if added == 0 and waiting == 0:
         lines.append("- Nothing new to add: everything OpenStreetMap lists is already in the Sheet.")
