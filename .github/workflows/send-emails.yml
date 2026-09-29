@@ -32,12 +32,26 @@ jobs:
       - name: Install libraries
         run: pip install "gspread>=6,<7" "requests>=2.31" "dnspython>=2.4"
 
+      # Phase 7: check the inbox first, so no follow-up goes to someone who has just replied.
+      # If this step fails, the run carries on: first emails still go, follow-ups wait.
+      - name: Check the inbox for replies first
+        id: replies
+        continue-on-error: true
+        env:
+          NAIRAHOST_MAIL_PASSWORD: ${{ secrets.NAIRAHOST_MAIL_PASSWORD }}
+          ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          DRY_RUN: "no"
+        run: python read_replies.py
+
       - name: Send emails
         env:
+          REPLIES_CHECKED: ${{ steps.replies.outcome }}
           ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
           GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           TEST_SEND_TO: ${{ github.event.inputs.test_send_to || '' }}
           MAX_EMAILS_PER_RUN: ${{ github.event.inputs.max_emails || '10' }}
         run: python send_emails.py
-        
