@@ -30,6 +30,11 @@ WhatsApp (new in version 3), for businesses with no email but a mobile number
     the 'WhatsApp Sent' box. The next run changes the row to 'WhatsApp sent'
     and fills in the dates.
 
+Opt-outs (new in version 4): a business that asked not to be contacted
+(Message Status 'Opted out', or the 'Opted Out' box ticked, on any row with the
+same email, WhatsApp number or name) is never drafted for, by email or WhatsApp.
+The row is marked 'Not sent' with the reason.
+
 It never sends anything itself.
 """
 
@@ -43,7 +48,7 @@ from datetime import datetime, timezone
 
 import requests
 
-SCRIPT_VERSION = "3 (25 Sep 2026)"
+SCRIPT_VERSION = "4 (28 Sep 2026)"
 
 # ---------------------------------------------------------------- settings
 MODEL = "claude-sonnet-5"
@@ -95,6 +100,7 @@ ST_WA_ONLY = "WhatsApp only"      # set by the contact finder: no email, but a m
 ST_WA_READY = "WhatsApp ready"    # message and link written, waiting for a person to tap send
 ST_WA_SENT = "WhatsApp sent"      # the person ticked 'WhatsApp Sent'
 TICKED = {"true", "yes", "y", "x", "sent", "done", "1"}
+ST_OPTED_OUT = "Opted out"        # final: the business asked not to be contacted (set by read_replies.py)
 
 # Column headings (found by heading, never by position)
 H_NAME = "Company Name"
@@ -117,6 +123,12 @@ H_WA_LINK = "WhatsApp Link"
 H_WA_SENT = "WhatsApp Sent"
 H_FIRST_SENT = "Date First Sent"
 H_LAST_CONTACT = "Date Last Contact"
+H_OPTED_OUT = "Opted Out"         # tick box, added by read_replies.py; ticked = never contact again
+H_REPLY_DATE = "Reply Date"       # added by read_replies.py: when the business last replied
+H_REPLY_NOTES = "Reply Notes"     # added by read_replies.py: what the reply was, in one line
+ST_REPLIED = "Replied"                          # a person replied; the conversation is Abolaji's now
+ST_REPLIED_INTERESTED = "Replied - interested"  # a person replied with interest or a question
+ST_FOLLOWED_UP = "Followed up"                  # the one follow-up email has gone out
 NEW_HEADINGS = [H_SUBJECT, H_BODY, H_DNOTES, H_WA_MSG, H_WA_LINK, H_WA_SENT]
 REQUIRED_HEADINGS = [H_NAME, H_EMAIL, H_WHAT, H_PROBLEM, H_STATUS]
 
@@ -544,6 +556,48 @@ def add_checkbox(ws, headers, row_num):
         return False
 
 
+# ---------------------------------------------------------------- opt-outs (shared with the sender)
+def is_opted_out(rowd):
+    """True if this row's business asked not to be contacted (status or the 'Opted Out' tick box)."""
+    return ((rowd.get(H_STATUS) or "").strip().lower() == ST_OPTED_OUT.lower()
+            or (rowd.get(H_OPTED_OUT) or "").strip().lower() in TICKED)
+
+
+def opt_out_keys(rowds):
+    """Every email address, WhatsApp number and business name that has opted out, on any row."""
+    emails, numbers, names = set(), set(), set()
+    for rowd in rowds:
+        if not is_opted_out(rowd):
+            continue
+        email = (rowd.get(H_EMAIL) or "").strip().lower()
+        if email:
+            emails.add(email)
+        number = normalize_ng_mobile(rowd.get(H_WA_NUMBER, ""))
+        if number:
+            numbers.add(number)
+        key = compact(rowd.get(H_NAME, ""))
+        if len(key) >= 4:
+            names.add(key)
+    return emails, numbers, names
+
+
+def opt_out_reason(rowd, keys):
+    """'' if this row may be contacted, else the reason it must not be (by any channel)."""
+    if is_opted_out(rowd):
+        return "this business asked not to be contacted"
+    emails, numbers, names = keys
+    email = (rowd.get(H_EMAIL) or "").strip().lower()
+    if email and email in emails:
+        return "this email address asked not to be contacted (on another row)"
+    number = normalize_ng_mobile(rowd.get(H_WA_NUMBER, ""))
+    if number and number in numbers:
+        return "this WhatsApp number asked not to be contacted (on another row)"
+    key = compact(rowd.get(H_NAME, ""))
+    if len(key) >= 4 and key in names:
+        return "a business with this name asked not to be contacted (on another row)"
+    return ""
+
+
 def finish_body(body):
     return body.strip() + "\n\n" + SIGN_OFF
 
@@ -707,12 +761,15 @@ def main():
     headers = ensure_columns(ws, headers)
 
     waiting = []
+    all_rowds = []
     for i, row in enumerate(grid[1:], start=2):
         row = row + [""] * (len(headers) - len(row))
         rowd = dict(zip(headers, row))
+        all_rowds.append(rowd)
         status = (rowd.get(H_STATUS) or "").strip().lower()
         if status in PICK_STATUSES:
             waiting.append((i, rowd))
+    blocked = opt_out_keys(all_rowds)   # since version 4: never write to anyone who opted out
 
     counts = {"checked": 0, ST_APPROVED: 0, ST_REDO: 0, ST_NOT_SENT: 0,
               ST_BAD_EMAIL: 0, "email_flagged": 0, "skipped": 0}
@@ -730,6 +787,15 @@ def main():
         name = rowd.get(H_NAME, "")
         email = (rowd.get(H_EMAIL) or "").strip()
         stamp = "%s | v%s | " % (today(), SCRIPT_VERSION.split()[0])
+
+        why = opt_out_reason(rowd, blocked)
+        if why:
+            if write_row(ws, headers, row_num, name, {
+                    H_STATUS: ST_NOT_SENT,
+                    H_DNOTES: clip(stamp + "Not sent: " + why + ".")}):
+                counts[ST_NOT_SENT] += 1
+                details.append("%s: Not sent (opted out)" % name)
+            continue
 
         reason = check_shape(email)
         if reason:
@@ -846,6 +912,14 @@ def main():
         name = rowd.get(H_NAME, "")
         stamp = "%s | v%s | " % (today(), SCRIPT_VERSION.split()[0])
         number = normalize_ng_mobile(rowd.get(H_WA_NUMBER, ""))
+        why = opt_out_reason(rowd, blocked)
+        if why:
+            if write_row(ws, headers, row_num, name, {
+                    H_STATUS: ST_NOT_SENT,
+                    H_DNOTES: clip(stamp + "Not sent: " + why + ".")}):
+                wa_counts["not_sent"] += 1
+                details.append("%s: Not sent (opted out)" % name)
+            continue
         if not number:
             if write_row(ws, headers, row_num, name, {
                     H_STATUS: ST_NOT_SENT,
