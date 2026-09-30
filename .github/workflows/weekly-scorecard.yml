@@ -1,0 +1,44 @@
+name: Weekly Scorecard (Mondays)
+
+# WHEN THIS RUNS
+#   - Automatically every Monday at 06:30 UTC (7:30 am in Lagos).
+#   - Any time you like: Actions tab, "Weekly Scorecard (Mondays)", "Run workflow".
+#     A run started by hand is a PREVIEW unless you pick "Real run" in the box.
+on:
+  schedule:
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Preview writes nothing and sends nothing. Real run updates the Scorecard tab and emails you."
+        type: choice
+        options:
+          - "Preview only"
+          - "Real run"
+        default: "Preview only"
+
+concurrency:
+  group: weekly-scorecard
+  cancel-in-progress: false
+
+jobs:
+  scorecard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: pip install "gspread>=6,<7" "requests>=2.31" "dnspython>=2.4"
+
+      - name: Weekly scorecard
+        env:
+          ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode != 'Real run' && 'yes' || 'no' }}
+        run: python weekly_scorecard.py
