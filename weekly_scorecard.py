@@ -34,7 +34,7 @@ from email.utils import formataddr, formatdate, make_msgid
 import draft_messages as dm
 import send_emails as se
 
-SCRIPT_VERSION = "1 (29 Sep 2026)"
+SCRIPT_VERSION = "2 (30 Sep 2026)"
 
 # ---------------------------------------------------------------- settings
 ALERT_TO_DEFAULT = "abolaji@trinata.org"
@@ -133,10 +133,14 @@ def facts(rowd):
          and status != dm.ST_WA_SENT.lower())
     wa_contacted = wa_ticked or status == dm.ST_WA_SENT.lower()
     contacted = email_contacted or wa_contacted
+    # Only a real date counts. Some cells hold an empty tick box ("FALSE") that spread sideways
+    # from the 'WhatsApp Sent' column, so "is anything in the cell?" is not good enough.
     meeting_time = get(rowd, H_MEETING_TIME)
-    meeting = bool(get(rowd, H_MEETING_BOOKED)) and not meeting_time.lower().startswith("cancelled")
-    replied = bool(get(rowd, dm.H_REPLY_DATE)) or status in (dm.ST_REPLIED.lower(),
-                                                             dm.ST_REPLIED_INTERESTED.lower())
+    booked = get(rowd, H_MEETING_BOOKED)
+    meeting = (bool(day_of(booked)) or booked.upper() == "TRUE") and \
+        not meeting_time.lower().startswith("cancelled")
+    replied = bool(day_of(get(rowd, dm.H_REPLY_DATE))) or status in (dm.ST_REPLIED.lower(),
+                                                                     dm.ST_REPLIED_INTERESTED.lower())
     interested = status == dm.ST_REPLIED_INTERESTED.lower() or INTEREST_MARK in get(rowd, dm.H_REPLY_NOTES).lower()
     prospect = status not in NOT_CHECKED and status != "not a fit" and icp not in NOT_PROSPECT_ICP
     if contacted or meeting:
@@ -244,7 +248,7 @@ def build(grid, now=None):
             week["replied"] += 1
             week_replies.append("%s: %s" % (name, get(rowd, dm.H_REPLY_NOTES).split("| ")[-1][:160]
                                             or "(no note)"))
-        if f["meeting"] and this_week(day_of(get(rowd, H_MEETING_BOOKED))):
+        if f["meeting"] and this_week(day_of(get(rowd, H_MEETING_BOOKED))):   # a date only
             week["meetings"] += 1
         call_day = day_of(get(rowd, H_MEETING_TIME))
         if f["meeting"] and call_day and call_day >= today:
