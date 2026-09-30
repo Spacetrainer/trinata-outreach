@@ -1,0 +1,48 @@
+name: Track Meetings (3 times a day)
+
+# WHEN THIS RUNS
+#   - Automatically at 08:20, 13:20 and 18:20 UTC (9:20 am, 2:20 pm and 7:20 pm in Lagos),
+#     every day including weekends.
+#   - Also inside "Send Emails (Weekdays)", just before any email goes out, so nobody who
+#     has booked a call gets the follow-up.
+#   - Any time you like: Actions tab, "Track Meetings (3 times a day)", "Run workflow".
+#     A run started by hand is a PREVIEW unless you pick "Real run" in the box.
+on:
+  schedule:
+    - cron: "20 8,13,18 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Preview changes nothing and sends nothing. Real run updates the Sheet and emails you."
+        type: choice
+        options:
+          - "Preview only"
+          - "Real run"
+        default: "Preview only"
+
+concurrency:
+  group: track-meetings
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: pip install "gspread>=6,<7" "requests>=2.31" "dnspython>=2.4"
+
+      - name: Track meetings
+        env:
+          BOOKING_CALENDAR_ID: ${{ secrets.BOOKING_CALENDAR_ID }}
+          ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode != 'Real run' && 'yes' || 'no' }}
+        run: python track_meetings.py
