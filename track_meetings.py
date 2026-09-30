@@ -52,7 +52,7 @@ from email.utils import formataddr, formatdate, make_msgid
 import draft_messages as dm
 import send_emails as se
 
-SCRIPT_VERSION = "1 (29 Sep 2026)"
+SCRIPT_VERSION = "2 (30 Sep 2026)"
 
 # ---------------------------------------------------------------- settings
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -327,7 +327,8 @@ def build_index(rows):
     by_email, by_domain, by_phone, names = {}, {}, {}, []
     for i, rowd in rows:
         status = (rowd.get(dm.H_STATUS) or "").strip().lower()
-        contacted = status in CONTACTED_STATUSES or bool((rowd.get(dm.H_FIRST_SENT) or "").strip())
+        first_sent = (rowd.get(dm.H_FIRST_SENT) or "").strip()
+        contacted = status in CONTACTED_STATUSES or bool(re.match(r"\d{4}-\d{2}-\d{2}", first_sent))
         if not contacted:
             continue
         addr = (rowd.get(dm.H_EMAIL) or "").strip().lower()
