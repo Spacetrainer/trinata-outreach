@@ -46,6 +46,18 @@ jobs:
           DRY_RUN: "no"
         run: python read_replies.py
 
+      # Phase 8: check the booking calendar too, so nobody who booked a call gets the follow-up.
+      # If this step fails, the run carries on as before.
+      - name: Check the calendar for booked calls
+        continue-on-error: true
+        env:
+          BOOKING_CALENDAR_ID: ${{ secrets.BOOKING_CALENDAR_ID }}
+          ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          DRY_RUN: "no"
+        run: python track_meetings.py
+
       - name: Send emails
         env:
           REPLIES_CHECKED: ${{ steps.replies.outcome }}
